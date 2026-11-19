@@ -201,7 +201,7 @@ dialog .fila{justify-content:flex-end;margin-top:6px}
     <label for="fCom">Comentario<textarea id="fCom" rows="2" maxlength="300"></textarea></label>
     <label for="fFotos" id="fFotosCaja">Fotos del hoyo<input id="fFotos" type="file" accept="image/*" multiple><small>Puedes elegir varias. Se achican solas antes de subir.</small></label>
     <p class="dato" id="fEstado" role="status"></p>
-    <div class="fila"><button type="button" class="btn sec" id="fCancel">Cancelar</button><button class="btn" id="fGuardar">Guardar y ubicar en el mapa</button></div>
+    <div class="fila"><button type="button" class="btn sec" id="fCancel">Cancelar</button><button class="btn" id="fGuardar">Guardar hoyo</button></div>
   </form>
 </dialog>
 
@@ -362,6 +362,7 @@ function pintar(){
   $("kTotal").textContent=tot; $("kPend").textContent=pend; $("kRep").textContent=rep;
   var pct = tot? Math.round(rep*100/tot):0; $("kPct").textContent=pct+"%"; $("kBar").style.width=pct+"%";
   pintarFiltros(); pintarPines(); pintarLista(); if(sel) pintarDetalle();
+  if(INTERNO && !ubicando){ var su=hoyos.filter(function(x){return typeof x.lat!=="number";}).length; var av=$("aviso"); if(su && (av.hidden || av.dataset.su)){ av.dataset.su="1"; aviso(su===1?"Hay 1 hoyo sin ubicar en el mapa: aparece en la lista con la nota «sin ubicar en el mapa». Ábrelo y usa «Ubicar en el mapa».":"Hay "+su+" hoyos sin ubicar en el mapa: aparecen en la lista con la nota «sin ubicar en el mapa». Ábrelos y usa «Ubicar en el mapa»."); } else if(!su && av.dataset.su){ delete av.dataset.su; aviso(""); } }
 }
 function chip(txt, n, activo, color, fn){
   var b=el("button","chip"); b.type="button"; b.setAttribute("aria-pressed",activo?"true":"false");
@@ -531,6 +532,56 @@ function pedirUbicacion(id){
 $("luz").addEventListener("click",function(){$("luz").hidden=true;});
 document.addEventListener("keydown",function(e){ if(e.key==="Escape"){ $("luz").hidden=true; if(ubicando){ubicando=null; document.body.classList.remove("modo-ubicar"); aviso("");} }});
 
+/* ---------- Ubicación automática a partir de la dirección ---------- */
+var NUM={uno:"1",dos:"2",tres:"3",cuatro:"4",cinco:"5",seis:"6",siete:"7",ocho:"8",nueve:"9",diez:"10",once:"11",doce:"12",trece:"13"};
+function normCalle(s){
+  var w=(s||"").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"").replace(/[^a-z0-9 ]/g," ").split(/\s+/).filter(Boolean).map(function(x){return NUM[x]||x;});
+  while(w.length && /^(avenida|av|avda|calle|pasaje|psje|pje|camino|esquina|la|el)$/.test(w[0]) && w.length>1) w.shift();
+  return w.join(" ");
+}
+var CALLES_IDX=null;
+function idxCalles(){
+  if(CALLES_IDX) return CALLES_IDX;
+  CALLES_IDX=[];
+  CALLES.s.forEach(function(g){ if(!g[0]) return; var k=normCalle(g[0]);
+    g[2].split(".").forEach(function(l){ var c=[]; for(var i=0;i+3<l.length;i+=4) c.push([CALLES.o[0]+d2(l,i)*CALLES.o[2], CALLES.o[1]+d2(l,i+2)*CALLES.o[2]]); if(c.length>1) CALLES_IDX.push({k:k,c:c}); });
+  });
+  return CALLES_IDX;
+}
+var KX=111320*Math.cos(-33.49*Math.PI/180), KY=110540;
+function m(p){return [p[0]*KX,p[1]*KY];}
+function candidatas(q){
+  var k=normCalle(q); if(!k) return [];
+  var I=idxCalles(), r=I.filter(function(s){return s.k===k;});
+  if(!r.length) r=I.filter(function(s){return (" "+s.k+" ").indexOf(" "+k+" ")>=0;});
+  return r;
+}
+function pseg(p,a,b){var dx=b[0]-a[0],dy=b[1]-a[1],l=dx*dx+dy*dy,t=l?((p[0]-a[0])*dx+(p[1]-a[1])*dy)/l:0;t=Math.max(0,Math.min(1,t));var q=[a[0]+t*dx,a[1]+t*dy];return [Math.hypot(p[0]-q[0],p[1]-q[1]),q];}
+function ubicarDireccion(dir){
+  var limpia=(dir||"").replace(/\(.*?\)/g," ").replace(/n[°º]\s*\d+|altura\s*\d+|\b\d{3,5}\b/gi," ");
+  var partes=limpia.split(/\s+(?:con|esquina|esq\.?|y)\s+|\/|,/i).map(function(s){return s.trim();}).filter(function(s){return normCalle(s).length>1;});
+  if(!partes.length) return null;
+  var A=candidatas(partes[0]);
+  if(partes.length>1){
+    var B=candidatas(partes[1]);
+    if(A.length && B.length){
+      var best=[1e12,null];
+      A.forEach(function(s){ var c=s.c.map(m);
+        for(var i=0;i<c.length-1;i++){ var n=Math.max(1,Math.ceil(Math.hypot(c[i+1][0]-c[i][0],c[i+1][1]-c[i][1])/8));
+          for(var j=0;j<=n;j++){ var p=[c[i][0]+(c[i+1][0]-c[i][0])*j/n, c[i][1]+(c[i+1][1]-c[i][1])*j/n];
+            B.forEach(function(t){ var e=t.c.map(m); for(var x=0;x<e.length-1;x++){ var r=pseg(p,e[x],e[x+1]); if(r[0]<best[0]) best=[r[0],[(p[0]+r[1][0])/2,(p[1]+r[1][1])/2]]; } });
+          } } });
+      if(best[1] && best[0]<150) return {lat:+(best[1][1]/KY).toFixed(6), lon:+(best[1][0]/KX).toFixed(6), ubic: best[0]<60?"exacta":"aprox"};
+    }
+  }
+  var C=A.length?A:(partes[1]?candidatas(partes[1]):[]);
+  if(!C.length) return null;
+  var pts=[]; C.forEach(function(s){ s.c.forEach(function(p){pts.push(m(p));}); });
+  var cx=0,cy=0; pts.forEach(function(p){cx+=p[0];cy+=p[1];}); cx/=pts.length; cy/=pts.length;
+  var mejor=[1e12,null]; C.forEach(function(s){ var c=s.c.map(m); for(var i=0;i<c.length-1;i++){ var r=pseg([cx,cy],c[i],c[i+1]); if(r[0]<mejor[0]) mejor=r; } });
+  return {lat:+(mejor[1][1]/KY).toFixed(6), lon:+(mejor[1][0]/KX).toFixed(6), ubic:"aprox"};
+}
+
 /* ---------- Fotos ---------- */
 function esSubida(n){ return n.indexOf(".")<0; }           /* las fotos subidas desde la página se guardan por id */
 function urlFoto(n){ return esSubida(n) ? "/_blob/"+n : "fotos/"+n; }
@@ -584,8 +635,12 @@ $("frm").addEventListener("submit",function(e){
   bg.disabled=true;
   subirFotos(arch, function(i,t){est.textContent="Subiendo foto "+i+" de "+t+"…";}).then(function(r){
   est.textContent="Guardando…";
-  return ref.set({n:n, dir:dir, dirOriginal:dir, grav:$("fGrav").value, estado:"pendiente", lat:null, lon:null, ubic:"", fotos:r.ids, nombre:$("fNom").value.trim(), tel:$("fTel").value.trim(), coment:$("fCom").value.trim(), enviado:false, creado:new Date().toISOString(), repFecha:null, repPor:null})
-    .then(function(){ $("dlg").close(); sel=ref.id; pedirUbicacion(ref.id); if(r.fallas.length) avisoFotos(r); });
+  var u=ubicarDireccion(dir);
+  return ref.set({n:n, dir:dir, dirOriginal:dir, grav:$("fGrav").value, estado:"pendiente", lat:u?u.lat:null, lon:u?u.lon:null, ubic:u?u.ubic:"", fotos:r.ids, nombre:$("fNom").value.trim(), tel:$("fTel").value.trim(), coment:$("fCom").value.trim(), enviado:false, creado:new Date().toISOString(), repFecha:null, repPor:null})
+    .then(function(){ $("dlg").close(); sel=ref.id;
+      if(u){ map.flyTo([u.lat,u.lon],16,{duration:.5}); aviso(u.ubic==="exacta" ? "Hoyo ubicado en el mapa según la dirección. Si el punto no es exacto, arrastra el pin." : "Ubiqué el hoyo en un punto aproximado de la calle. Arrástralo al lugar exacto o usa «Corregir ubicación»."); }
+      else pedirUbicacion(ref.id);
+      if(r.fallas.length) avisoFotos(r); });
   }).catch(function(){ est.textContent="No se pudo guardar el hoyo. Revisa tu conexión e inténtalo de nuevo."; })
     .then(function(){ bg.disabled=false; });
 });
