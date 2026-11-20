@@ -222,10 +222,13 @@ dialog .fila{justify-content:flex-end;margin-top:6px}
   </form>
 </dialog>
 
-<script src="data/config.js"></script>
+<script>/* Datos siempre frescos: se saltan la caché del navegador */
+var _v=Date.now();
+document.write('<script src="data/config.js?v='+_v+'"><\/script>');
+</script>
 <script src="data/base.js"></script>
 <script src="data/calles.js"></script>
-<script src="data/hoyos.js"></script>
+<script>document.write('<script src="data/hoyos.js?v='+_v+'"><\/script>');</script>
 <script src="lib/leaflet.js"></script>
 <script>
 (function(){
